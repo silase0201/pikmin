@@ -283,6 +283,7 @@ function processLocalPOIs(rawPois, userLat, userLng, radiusMeters, selectedRules
 
     return {
       ...cell,
+      decorTypes: Array.from(cell.decorTypes),
       typeCount,
       isPure,
       decorList,
@@ -544,6 +545,7 @@ export function processPOIsAndS2Cells(elements, userLat, userLng, selectedRules)
 
     return {
       ...cell,
+      decorTypes: Array.from(cell.decorTypes),
       typeCount,
       isPure,
       decorList,

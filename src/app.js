@@ -26,12 +26,33 @@ export const POPULAR_DECOR_IDS = [
   'post_office', 'hotel', 'beach'
 ];
 
+/**
+ * 安全取得 Cell 所屬的所有飾品種類 ID 清單 (容錯處理 Set, Array, Cached Object 等結構)
+ */
+export function getCellDecorTypeIds(cell) {
+  if (!cell) return [];
+  if (Array.isArray(cell.decorTypes) && cell.decorTypes.length > 0) {
+    return cell.decorTypes;
+  }
+  if (cell.decorTypes instanceof Set && cell.decorTypes.size > 0) {
+    return Array.from(cell.decorTypes);
+  }
+  if (Array.isArray(cell.decorList) && cell.decorList.length > 0) {
+    return cell.decorList.map(d => (typeof d === 'string' ? d : d.id)).filter(Boolean);
+  }
+  if (Array.isArray(cell.pois) && cell.pois.length > 0) {
+    return Array.from(new Set(cell.pois.map(p => p.decorType).filter(Boolean)));
+  }
+  return [];
+}
+
+
 export class PikminApp {
   constructor() {
     this.currentPosition = null; // { lat, lng, accuracy }
     this.selectedDecorIds = new Set(getAllDecorIds());
     this.displayLimit = 25; // 10, 25, 50, 100, 9999
-    this.sortRule = 'pure'; // 'distance' | 'pure' | 'matches'
+    this.sortRule = 'matches'; // 'matches' (預設: 最多符合) | 'pure' | 'distance'
     this.radiusMeters = 1000; // 300, 500, 1000, 2000, 3000
     this.mobileView = 'both'; // 'both' | 'radar' | 'list'
     this.rawPois = [];
@@ -52,7 +73,7 @@ export class PikminApp {
     const saved = loadUserSettings({
       selectedDecorIds: getAllDecorIds(),
       displayLimit: 25,
-      sortRule: 'pure',
+      sortRule: 'matches',
       radiusMeters: 1000,
     });
 
@@ -65,7 +86,7 @@ export class PikminApp {
     }
 
     this.displayLimit = Number(saved.displayLimit) || 25;
-    this.sortRule = saved.sortRule || 'pure';
+    this.sortRule = saved.sortRule || 'matches';
     this.radiusMeters = Number(saved.radiusMeters) || 1000;
 
     // 手機視圖偏好
@@ -383,26 +404,58 @@ export class PikminApp {
       });
     }
 
-    // 排序與數量選項改變
-    this.elements.selectSortRule.addEventListener('change', (e) => {
-      this.sortRule = e.target.value;
+    // 排序方式選項改變 (支援 change 與 input 雙重監聽，解決手機端滾輪未觸發或無即時回饋問題)
+    const onSortRuleChange = (e) => {
+      const newRule = e.target.value;
+      if (!newRule) return;
+      this.sortRule = newRule;
       this.saveCurrentSettings();
       this.applySortingAndRender();
-    });
 
-    this.elements.selectDisplayLimit.addEventListener('change', (e) => {
+      const sortRuleNames = {
+        matches: '⭐ 最多符合 (多重雙收)',
+        pure: '🟢 純種優先 (100% 命中)',
+        distance: '📏 距離最近 (由近到遠)'
+      };
+      this.showToast(`📊 排序已切換：${sortRuleNames[newRule] || newRule}`);
+
+      // 手機體驗優化：若當前在雷達全景模式，切換為同時顯示並滾動至結果卡片
+      if (window.innerWidth <= 768) {
+        if (this.mobileView === 'radar') {
+          this.applyMobileView('both');
+        }
+        const resultsEl = document.querySelector('.results-section');
+        if (resultsEl) {
+          resultsEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }
+    };
+    this.elements.selectSortRule.addEventListener('change', onSortRuleChange);
+    this.elements.selectSortRule.addEventListener('input', onSortRuleChange);
+
+    // 顯示筆數選項改變
+    const onDisplayLimitChange = (e) => {
       this.displayLimit = Number(e.target.value);
       this.saveCurrentSettings();
       this.applySortingAndRender();
-    });
+      this.showToast(`📄 顯示數量：${this.displayLimit === 9999 ? '全部' : this.displayLimit + ' 筆'}`);
+    };
+    this.elements.selectDisplayLimit.addEventListener('change', onDisplayLimitChange);
+    this.elements.selectDisplayLimit.addEventListener('input', onDisplayLimitChange);
 
-    this.elements.selectRadius.addEventListener('change', (e) => {
-      this.radiusMeters = Number(e.target.value);
+    // 搜尋半徑選項改變
+    const onRadiusChange = (e) => {
+      const newRadius = Number(e.target.value);
+      if (newRadius === this.radiusMeters) return;
+      this.radiusMeters = newRadius;
       this.saveCurrentSettings();
       this.radar.maxDistance = this.radiusMeters;
       this.radar.render();
+      this.showToast(`🎯 搜尋半徑切換為 ${this.radiusMeters}m，開始探測...`);
       this.executeQuery();
-    });
+    };
+    this.elements.selectRadius.addEventListener('change', onRadiusChange);
+    this.elements.selectRadius.addEventListener('input', onRadiusChange);
 
     // 立即重新查詢按鈕
     this.elements.btnExecuteSearch.addEventListener('click', () => {
@@ -547,21 +600,23 @@ export class PikminApp {
     let displayList = [...this.rawCells];
 
     // 依照使用者選擇的規則排序
-    if (this.sortRule === 'pure') {
-      // 1. 純種區優先 (只有 1 種飾品且為使用者所選) > 混雜區；同等級按距離
+    if (this.sortRule === 'matches') {
+      // 1. 最多符合優先 (預設：涵蓋使用者勾選的目標飾品數量愈多愈好；若符合數相同，純種區優先；若同等級按距離)
+      displayList.sort((a, b) => {
+        const matchesA = getCellDecorTypeIds(a).filter(id => this.selectedDecorIds.has(id)).length;
+        const matchesB = getCellDecorTypeIds(b).filter(id => this.selectedDecorIds.has(id)).length;
+        if (matchesB !== matchesA) return matchesB - matchesA;
+        if (a.isPure && !b.isPure) return -1;
+        if (!a.isPure && b.isPure) return 1;
+        return a.distance - b.distance;
+      });
+    } else if (this.sortRule === 'pure') {
+      // 2. 純種區優先 (只有 1 種飾品且為使用者所選) > 混雜區；同等級按距離
       displayList.sort((a, b) => {
         if (a.isPure && !b.isPure) return -1;
         if (!a.isPure && b.isPure) return 1;
         // 若同為混雜區，飾品種數愈少優先
         if (a.typeCount !== b.typeCount) return a.typeCount - b.typeCount;
-        return a.distance - b.distance;
-      });
-    } else if (this.sortRule === 'matches') {
-      // 2. 最多符合優先 (涵蓋使用者勾選的目標飾品數量愈多愈好)
-      displayList.sort((a, b) => {
-        const matchesA = Array.from(a.decorTypes).filter(id => this.selectedDecorIds.has(id)).length;
-        const matchesB = Array.from(b.decorTypes).filter(id => this.selectedDecorIds.has(id)).length;
-        if (matchesB !== matchesA) return matchesB - matchesA;
         return a.distance - b.distance;
       });
     } else {
@@ -600,6 +655,13 @@ export class PikminApp {
         ? `<span class="tag-badge tag-pure">🟢 純種區 100% 命中</span>`
         : `<span class="tag-badge tag-mixed">🟡 ${cell.typeCount} 種飾品混雜</span>`;
 
+      // 最多符合數量徽章
+      const matchedIds = getCellDecorTypeIds(cell).filter(id => this.selectedDecorIds.has(id));
+      const matchedCount = matchedIds.length;
+      const matchBadge = (matchedCount > 0)
+        ? `<span class="tag-badge tag-matches">⭐ 符合 ${matchedCount} 種</span>`
+        : '';
+
       // 飾品晶片列表
       const decorBadges = cell.decorList.map(d => `
         <span class="decor-mini-chip" style="--chip-color: ${d.color}">
@@ -622,7 +684,10 @@ export class PikminApp {
             <h4 class="card-title">${mainPoi.name}</h4>
             <div class="card-subnames">${poiNames}${moreText}</div>
           </div>
-          ${pureBadge}
+          <div class="card-badges-group" style="display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end;">
+            ${matchBadge}
+            ${pureBadge}
+          </div>
         </div>
 
         <div class="card-decors-row">
@@ -816,6 +881,9 @@ export class PikminApp {
 }
 
 // 啟動應用
-window.addEventListener('DOMContentLoaded', () => {
-  window.pikminApp = new PikminApp();
-});
+if (typeof window !== 'undefined') {
+  window.addEventListener('DOMContentLoaded', () => {
+    window.pikminApp = new PikminApp();
+  });
+}
+
