@@ -18,8 +18,12 @@ const OVERPASS_SERVERS = [
   'https://overpass.kumi.systems/api/interpreter',
 ];
 
-// 本地瓦片 CDN 備援基底網址
-const TILE_CDN_BASE = 'https://raw.githubusercontent.com/scott0127/pik_tool/main/public/data/regions';
+// 靜態瓦片高可用 CDN 節點 (優先使用全球高速、全 CORS 支援之 jsDelivr，備援採用 Fastly 與 GitHub Raw)
+const TILE_CDN_BASES = [
+  'https://cdn.jsdelivr.net/gh/scott0127/pik_tool@main/public/data/regions',
+  'https://fastly.jsdelivr.net/gh/scott0127/pik_tool@main/public/data/regions',
+  'https://raw.githubusercontent.com/scott0127/pik_tool/main/public/data/regions',
+];
 
 let currentServerIndex = 0;
 let lastRequestTime = 0;
@@ -82,10 +86,11 @@ async function loadRegionIndex(regionId) {
     return regionIndexMemoryCache.get(regionId);
   }
 
-  // 優先嘗試本地靜態目錄，次嘗試 CDN 備援
   const urls = [
+    `${TILE_CDN_BASES[0]}/${regionId}/index.json`,
+    `${TILE_CDN_BASES[1]}/${regionId}/index.json`,
+    `${TILE_CDN_BASES[2]}/${regionId}/index.json`,
     `./data/regions/${regionId}/index.json`,
-    `${TILE_CDN_BASE}/${regionId}/index.json`,
   ];
 
   for (const url of urls) {
@@ -93,8 +98,10 @@ async function loadRegionIndex(regionId) {
       const res = await fetch(url);
       if (res.ok) {
         const json = await res.json();
-        regionIndexMemoryCache.set(regionId, json);
-        return json;
+        if (json && json.tiles) {
+          regionIndexMemoryCache.set(regionId, json);
+          return json;
+        }
       }
     } catch (e) {}
   }
@@ -111,8 +118,10 @@ async function loadRegionTile(regionId, tileFileName) {
   }
 
   const urls = [
+    `${TILE_CDN_BASES[0]}/${regionId}/tiles/${tileFileName}`,
+    `${TILE_CDN_BASES[1]}/${regionId}/tiles/${tileFileName}`,
+    `${TILE_CDN_BASES[2]}/${regionId}/tiles/${tileFileName}`,
     `./data/regions/${regionId}/tiles/${tileFileName}`,
-    `${TILE_CDN_BASE}/${regionId}/tiles/${tileFileName}`,
   ];
 
   for (const url of urls) {
@@ -129,34 +138,19 @@ async function loadRegionTile(regionId, tileFileName) {
 }
 
 /**
- * 從靜態分片 (Local-First Tiles) 查詢
+ * 單一區域分片執行解析
  */
-async function queryFromLocalTiles(lat, lng, radiusMeters, selectedRules, onProgress) {
+async function queryRegionDirect(targetRegion, lat, lng, radiusMeters, selectedRules) {
   const bounds = calculateBoundingBox(lat, lng, radiusMeters);
-
-  // 判斷所屬區域：優先使用高密度大台北，次用台灣本島
-  const isTaipei = (lat >= 24.9455 && lat <= 25.2104 && lng >= 121.457 && lng <= 121.6655);
-  const isTaiwan = (lat >= 21.8 && lat <= 25.4 && lng >= 119.8 && lng <= 122.2);
-
-  let targetRegion = null;
-  if (isTaipei) targetRegion = 'taipei';
-  else if (isTaiwan) targetRegion = 'taiwan_main_island';
-
-  if (!targetRegion) return null; // 不在台灣分片範圍，轉交 Overpass
-
-  if (onProgress) onProgress({ status: 'local', message: `⚡ 正在載入本地極速分片資料 (${targetRegion})...` });
-
   const index = await loadRegionIndex(targetRegion);
   if (!index || !index.tiles) return null;
 
-  // 篩選與當前搜尋範圍相交的分片
   const intersectingTiles = index.tiles.filter(t => bboxIntersects(bounds, t.bbox) && t.poiCount > 0);
   if (intersectingTiles.length === 0) return null;
 
   const selectedTypeSet = new Set(selectedRules.map(r => r.id));
   const rawPois = [];
 
-  // 並行載入交集分片
   const tilePromises = intersectingTiles.map(t => loadRegionTile(targetRegion, t.file));
   const tileResults = await Promise.all(tilePromises);
 
@@ -186,8 +180,37 @@ async function queryFromLocalTiles(lat, lng, radiusMeters, selectedRules, onProg
     }
   }
 
-  // 轉換為標準結構
+  if (rawPois.length === 0) return null;
   return processLocalPOIs(rawPois, lat, lng, radiusMeters, selectedRules);
+}
+
+/**
+ * 從靜態分片 (Local-First Tiles) 查詢 (台灣全島雙層自動容錯)
+ */
+async function queryFromLocalTiles(lat, lng, radiusMeters, selectedRules, onProgress) {
+  // 判斷所屬區域：優先使用高密度大台北，次用台灣本島
+  const isTaipei = (lat >= 24.9455 && lat <= 25.2104 && lng >= 121.457 && lng <= 121.6655);
+  const isTaiwan = (lat >= 21.8 && lat <= 25.4 && lng >= 119.8 && lng <= 122.2);
+
+  const candidateRegions = [];
+  if (isTaipei) candidateRegions.push('taipei');
+  if (isTaiwan) candidateRegions.push('taiwan_main_island');
+
+  if (candidateRegions.length === 0) return null; // 不在台灣分片範圍，轉交 Overpass
+
+  for (const targetRegion of candidateRegions) {
+    if (onProgress) onProgress({ status: 'local', message: `⚡ 正在載入極速分片資料 (${targetRegion})...` });
+    try {
+      const res = await queryRegionDirect(targetRegion, lat, lng, radiusMeters, selectedRules);
+      if (res && res.pois.length > 0) {
+        return res;
+      }
+    } catch (e) {
+      console.warn(`[LocalTiles] Failed loading from ${targetRegion}, trying next...`, e);
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -420,7 +443,7 @@ export async function fetchDecorPOIs({
     }
   }
 
-  throw lastError || new Error('所有 Overpass 伺服器均暫時無回應，請稍候重試');
+  throw new Error('此位置為海外區域，目前公開 OSM 伺服器限制瀏覽器跨域 (CORS) 存取。建議選擇台灣各都會區（台北、高雄、台中、台南、新竹等）體驗極速雷達探測！');
 }
 
 /**
