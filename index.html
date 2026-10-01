@@ -2,7 +2,10 @@
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#090d16">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>皮克敏飾品快速搜尋雷達 | Pikmin Bloom Decor Radar</title>
   <meta name="description" content="依據目前 GPS 位置即時搜尋周圍皮克敏 Bloom S2 網格飾品位置，支援純種區優先、距離排序與一鍵地圖 App 導航。">
   <link rel="stylesheet" href="style.css">
@@ -25,33 +28,47 @@
           <span id="gps-coord-text" class="gps-coord">--</span>
         </div>
         <div class="gps-actions">
-          <button id="btn-refresh-gps" class="btn-icon" title="重新獲取目前 GPS 定位">🔄 重新定位</button>
-          <button id="btn-presets" class="btn-icon" title="切換常用預設地點">📍 熱門地點</button>
-          <button id="btn-manual-gps" class="btn-icon" title="手動輸入經緯度座標">✏️ 手動坐標</button>
+          <button id="btn-refresh-gps" class="btn-icon" title="重新獲取目前 GPS 定位">
+            <span class="icon">🔄</span><span class="btn-label">定位</span>
+          </button>
+          <button id="btn-presets" class="btn-icon" title="切換常用預設地點">
+            <span class="icon">📍</span><span class="btn-label">熱門</span>
+          </button>
+          <button id="btn-manual-gps" class="btn-icon" title="手動輸入經緯度座標">
+            <span class="icon">✏️</span><span class="btn-label">坐標</span>
+          </button>
         </div>
       </div>
     </header>
 
     <!-- 工具控制列 -->
     <section class="toolbar">
-      <div class="toolbar-left">
+      <div class="toolbar-primary-row">
         <button id="btn-toggle-filter" class="btn-toggle-filter">
-          <span>🔍 篩選飾品</span>
+          <span class="btn-filter-icon">🔍</span>
+          <span class="btn-filter-text">篩選飾品</span>
           <span id="selected-count-badge" class="badge-count">39 / 39</span>
           <span class="arrow-indicator">▾</span>
         </button>
 
+        <button id="btn-execute-search" class="btn-search-primary">
+          <span class="btn-search-icon">⚡</span>
+          <span class="btn-search-text">立即搜尋</span>
+        </button>
+      </div>
+
+      <div class="toolbar-controls-row">
         <div class="select-group">
-          <label for="select-sort-rule">排序：</label>
+          <label for="select-sort-rule" class="select-label">排序</label>
           <select id="select-sort-rule" class="custom-select">
-            <option value="pure">🟢 純種區優先 (100% 命中)</option>
+            <option value="pure">🟢 純種優先</option>
             <option value="distance">📏 距離最近</option>
-            <option value="matches">⭐ 最多符合 (多重雙收)</option>
+            <option value="matches">⭐ 最多符合</option>
           </select>
         </div>
 
         <div class="select-group">
-          <label for="select-display-limit">顯示：</label>
+          <label for="select-display-limit" class="select-label">顯示</label>
           <select id="select-display-limit" class="custom-select">
             <option value="10">10 筆</option>
             <option value="25" selected>25 筆</option>
@@ -62,42 +79,79 @@
         </div>
 
         <div class="select-group">
-          <label for="select-radius">半徑：</label>
+          <label for="select-radius" class="select-label">半徑</label>
           <select id="select-radius" class="custom-select">
             <option value="300">300m</option>
             <option value="500">500m</option>
-            <option value="1000" selected>1km (推薦)</option>
+            <option value="1000" selected>1km</option>
             <option value="2000">2km</option>
             <option value="3000">3km</option>
           </select>
         </div>
       </div>
-
-      <div class="toolbar-right">
-        <button id="btn-execute-search" class="btn-search-primary">⚡ 立即搜尋</button>
-      </div>
     </section>
 
-    <!-- 可展開的飾品開關抽屜 (無子選項，排除非地圖飾品) -->
+    <!-- 手機專屬視圖切換分頁 (螢幕 < 768px 時啟用) -->
+    <nav class="mobile-view-tabs" id="mobile-view-tabs">
+      <button class="tab-btn active" data-view="both">
+        <span>📱</span> 同時顯示
+      </button>
+      <button class="tab-btn" data-view="radar">
+        <span>🎯</span> 雷達畫布
+      </button>
+      <button class="tab-btn" data-view="list">
+        <span>📋</span> 推薦清單
+      </button>
+    </nav>
+
+    <!-- 飾品篩選遮罩 (手機抽屜模式點擊背景關閉) -->
+    <div id="filter-backdrop" class="filter-backdrop"></div>
+
+    <!-- 飾品開關抽屜 / 底部面板 (無子選項，排除非地圖飾品) -->
     <section id="decor-filter-panel" class="decor-filter-panel">
+      <div class="bottom-sheet-handle"></div>
+
       <div class="filter-header">
-        <div class="filter-search-box">
-          <input type="text" id="decor-search-input" placeholder="過濾飾品名稱 (例: 咖啡、拉麵、便利商店...)" />
+        <div class="filter-title-row">
+          <div class="filter-title">
+            <span>🎨 飾品分類過濾</span>
+            <span id="filter-modal-count" class="badge-count">39 / 39</span>
+          </div>
+          <button id="btn-close-filter" class="btn-close-filter" title="關閉面板">✕</button>
         </div>
-        <div class="filter-actions">
-          <button id="btn-select-all-decors" class="btn-text">全選</button>
-          <span class="divider">|</span>
-          <button id="btn-clear-all-decors" class="btn-text">全部清除</button>
+
+        <div class="filter-search-box">
+          <input type="text" id="decor-search-input" placeholder="🔍 搜尋飾品名稱 (例: 咖啡、拉麵、便利商店...)" />
+          <button id="btn-clear-search" class="btn-clear-search" title="清除搜尋文字" style="display: none;">✕</button>
+        </div>
+
+        <div class="filter-actions-row">
+          <div class="filter-actions-group">
+            <button id="btn-select-all-decors" class="btn-filter-action">全選</button>
+            <button id="btn-clear-all-decors" class="btn-filter-action">清除</button>
+            <button id="btn-invert-decors" class="btn-filter-action">反向</button>
+            <button id="btn-preset-hot-decors" class="btn-filter-action highlight">熱門常客</button>
+          </div>
         </div>
       </div>
+
       <div id="decor-grid" class="decor-grid">
         <!-- 由 JS 動態產生 39 種大類飾品開關 -->
+      </div>
+
+      <!-- 底部吸附套用按鈕 (手機極致便利) -->
+      <div class="filter-footer">
+        <button id="btn-apply-filter" class="btn-apply-filter">
+          <span>✔️ 套用篩選並搜尋</span>
+          <span id="apply-filter-count-badge" class="badge-apply">已選 39 種</span>
+        </button>
       </div>
     </section>
 
     <!-- 主要呈現區域：左側為空白座標雷達畫布，右側為推薦點位清單 -->
-    <main class="main-content">
+    <main class="main-content view-both">
       <!-- 空白座標雷達畫布區 (0 張圖片載入，極致響應) -->
+
       <section class="radar-section">
         <div class="radar-card">
           <div class="radar-header">

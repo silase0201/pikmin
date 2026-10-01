@@ -5,7 +5,7 @@
 import { DECOR_RULES, DECOR_RULES_MAP, getAllDecorIds } from './decor-rules.js';
 import { fetchDecorPOIs, calculateHaversineDistance } from './overpass.js';
 import { RadarCanvas } from './radar-canvas.js';
-import { loadUserSettings, saveUserSettings } from './cache.js';
+import { loadUserSettings, saveUserSettings, loadDecorFilter, saveDecorFilter } from './cache.js';
 
 // 預設熱門測試座標
 export const PRESET_LOCATIONS = [
@@ -18,6 +18,14 @@ export const PRESET_LOCATIONS = [
   { name: '東京車站 (海外)', lat: 35.68124, lng: 139.76712 },
 ];
 
+// 熱門常客純種飾品推薦
+export const POPULAR_DECOR_IDS = [
+  'cafe', 'sweetshop', 'bakery', 'ramen', 'restaurant',
+  'pharmacy', 'convenience_store', 'supermarket', 'station',
+  'park', 'zoo', 'aquarium', 'museum', 'cinema',
+  'post_office', 'hotel', 'beach'
+];
+
 export class PikminApp {
   constructor() {
     this.currentPosition = null; // { lat, lng, accuracy }
@@ -25,6 +33,7 @@ export class PikminApp {
     this.displayLimit = 25; // 10, 25, 50, 100, 9999
     this.sortRule = 'pure'; // 'distance' | 'pure' | 'matches'
     this.radiusMeters = 1000; // 300, 500, 1000, 2000, 3000
+    this.mobileView = 'both'; // 'both' | 'radar' | 'list'
     this.rawPois = [];
     this.rawCells = [];
     this.activeAbortController = null;
@@ -38,6 +47,8 @@ export class PikminApp {
   }
 
   initSettings() {
+    // 優先載入獨立的飾品篩選持久化記錄
+    const savedFilter = loadDecorFilter();
     const saved = loadUserSettings({
       selectedDecorIds: getAllDecorIds(),
       displayLimit: 25,
@@ -45,12 +56,30 @@ export class PikminApp {
       radiusMeters: 1000,
     });
 
-    if (saved.selectedDecorIds && Array.isArray(saved.selectedDecorIds)) {
+    if (Array.isArray(savedFilter)) {
+      this.selectedDecorIds = new Set(savedFilter);
+    } else if (saved.selectedDecorIds && Array.isArray(saved.selectedDecorIds)) {
       this.selectedDecorIds = new Set(saved.selectedDecorIds);
+    } else {
+      this.selectedDecorIds = new Set(getAllDecorIds());
     }
+
     this.displayLimit = Number(saved.displayLimit) || 25;
     this.sortRule = saved.sortRule || 'pure';
     this.radiusMeters = Number(saved.radiusMeters) || 1000;
+
+    // 手機視圖偏好
+    try {
+      const savedView = localStorage.getItem('pikmin_mobile_view_v1');
+      if (savedView && ['both', 'radar', 'list'].includes(savedView)) {
+        this.mobileView = savedView;
+      }
+    } catch (e) {}
+  }
+
+  saveDecorFilterSelection() {
+    saveDecorFilter(Array.from(this.selectedDecorIds));
+    this.saveCurrentSettings();
   }
 
   saveCurrentSettings() {
@@ -72,13 +101,21 @@ export class PikminApp {
       btnPresetLocations: document.getElementById('btn-presets'),
       presetModal: document.getElementById('preset-modal'),
       manualModal: document.getElementById('manual-modal'),
+      filterBackdrop: document.getElementById('filter-backdrop'),
       decorFilterPanel: document.getElementById('decor-filter-panel'),
       decorGrid: document.getElementById('decor-grid'),
       decorSearchInput: document.getElementById('decor-search-input'),
+      btnClearSearch: document.getElementById('btn-clear-search'),
       btnSelectAllDecors: document.getElementById('btn-select-all-decors'),
       btnClearAllDecors: document.getElementById('btn-clear-all-decors'),
+      btnInvertDecors: document.getElementById('btn-invert-decors'),
+      btnPresetHotDecors: document.getElementById('btn-preset-hot-decors'),
       btnToggleFilterDrawer: document.getElementById('btn-toggle-filter'),
+      btnCloseFilter: document.getElementById('btn-close-filter'),
+      btnApplyFilter: document.getElementById('btn-apply-filter'),
       selectedCountBadge: document.getElementById('selected-count-badge'),
+      filterModalCount: document.getElementById('filter-modal-count'),
+      applyFilterCountBadge: document.getElementById('apply-filter-count-badge'),
       selectSortRule: document.getElementById('select-sort-rule'),
       selectDisplayLimit: document.getElementById('select-display-limit'),
       selectRadius: document.getElementById('select-radius'),
@@ -89,12 +126,17 @@ export class PikminApp {
       toast: document.getElementById('toast'),
       radarCanvas: document.getElementById('radar-canvas'),
       btnResetView: document.getElementById('btn-reset-view'),
+      mainContent: document.querySelector('.main-content'),
+      mobileViewTabs: document.getElementById('mobile-view-tabs'),
     };
 
     // 套用選單初始值
     this.elements.selectSortRule.value = this.sortRule;
     this.elements.selectDisplayLimit.value = String(this.displayLimit);
     this.elements.selectRadius.value = String(this.radiusMeters);
+
+    // 套用手機視圖初始狀態
+    this.applyMobileView(this.mobileView);
 
     this.renderDecorSwitches();
   }
@@ -137,19 +179,23 @@ export class PikminApp {
         <span class="decor-dot" style="background-color: ${rule.color}"></span>
         <span class="decor-symbol">${rule.symbol}</span>
         <span class="decor-name">${rule.name}</span>
+        <span class="decor-check-mark">${isChecked ? '✓' : ''}</span>
       `;
 
       const checkbox = label.querySelector('input');
       checkbox.addEventListener('change', () => {
+        const checkMark = label.querySelector('.decor-check-mark');
         if (checkbox.checked) {
           this.selectedDecorIds.add(rule.id);
           label.classList.add('active');
+          if (checkMark) checkMark.textContent = '✓';
         } else {
           this.selectedDecorIds.delete(rule.id);
           label.classList.remove('active');
+          if (checkMark) checkMark.textContent = '';
         }
         this.updateDecorCountBadge();
-        this.saveCurrentSettings();
+        this.saveDecorFilterSelection();
       });
 
       grid.appendChild(label);
@@ -161,7 +207,71 @@ export class PikminApp {
   updateDecorCountBadge() {
     const count = this.selectedDecorIds.size;
     const total = DECOR_RULES.length;
-    this.elements.selectedCountBadge.textContent = `${count} / ${total}`;
+    const text = `${count} / ${total}`;
+
+    if (this.elements.selectedCountBadge) {
+      this.elements.selectedCountBadge.textContent = text;
+    }
+    if (this.elements.filterModalCount) {
+      this.elements.filterModalCount.textContent = text;
+    }
+    if (this.elements.applyFilterCountBadge) {
+      this.elements.applyFilterCountBadge.textContent = `已選 ${count} 種`;
+    }
+  }
+
+  openFilterPanel() {
+    this.elements.decorFilterPanel.classList.add('expanded');
+    if (this.elements.filterBackdrop) {
+      this.elements.filterBackdrop.classList.add('visible');
+    }
+    document.body.classList.add('filter-drawer-open');
+  }
+
+  closeFilterPanel() {
+    this.elements.decorFilterPanel.classList.remove('expanded');
+    if (this.elements.filterBackdrop) {
+      this.elements.filterBackdrop.classList.remove('visible');
+    }
+    document.body.classList.remove('filter-drawer-open');
+  }
+
+  toggleFilterPanel() {
+    if (this.elements.decorFilterPanel.classList.contains('expanded')) {
+      this.closeFilterPanel();
+    } else {
+      this.openFilterPanel();
+    }
+  }
+
+  applyMobileView(viewMode) {
+    this.mobileView = viewMode;
+    const main = this.elements.mainContent;
+    if (!main) return;
+
+    main.classList.remove('view-both', 'view-radar', 'view-list');
+    main.classList.add(`view-${viewMode}`);
+
+    // 更新分頁按鈕狀態
+    if (this.elements.mobileViewTabs) {
+      const tabs = this.elements.mobileViewTabs.querySelectorAll('.tab-btn');
+      tabs.forEach(tab => {
+        if (tab.dataset.view === viewMode) {
+          tab.classList.add('active');
+        } else {
+          tab.classList.remove('active');
+        }
+      });
+    }
+
+    try {
+      localStorage.setItem('pikmin_mobile_view_v1', viewMode);
+    } catch (e) {}
+
+    // 雷達重算尺寸
+    setTimeout(() => {
+      if (this.radar) this.radar.resize();
+    }, 50);
   }
 
   bindEvents() {
@@ -182,27 +292,96 @@ export class PikminApp {
 
     // 飾品搜尋篩選
     this.elements.decorSearchInput.addEventListener('input', () => {
+      const val = this.elements.decorSearchInput.value.trim();
+      if (this.elements.btnClearSearch) {
+        this.elements.btnClearSearch.style.display = val ? 'block' : 'none';
+      }
       this.renderDecorSwitches();
     });
+
+    if (this.elements.btnClearSearch) {
+      this.elements.btnClearSearch.addEventListener('click', () => {
+        this.elements.decorSearchInput.value = '';
+        this.elements.btnClearSearch.style.display = 'none';
+        this.renderDecorSwitches();
+      });
+    }
 
     // 全選飾品
     this.elements.btnSelectAllDecors.addEventListener('click', () => {
       getAllDecorIds().forEach(id => this.selectedDecorIds.add(id));
       this.renderDecorSwitches();
-      this.saveCurrentSettings();
+      this.saveDecorFilterSelection();
     });
 
     // 清除全選
     this.elements.btnClearAllDecors.addEventListener('click', () => {
       this.selectedDecorIds.clear();
       this.renderDecorSwitches();
-      this.saveCurrentSettings();
+      this.saveDecorFilterSelection();
     });
+
+    // 反向選取
+    if (this.elements.btnInvertDecors) {
+      this.elements.btnInvertDecors.addEventListener('click', () => {
+        const all = getAllDecorIds();
+        const next = new Set();
+        all.forEach(id => {
+          if (!this.selectedDecorIds.has(id)) next.add(id);
+        });
+        this.selectedDecorIds = next;
+        this.renderDecorSwitches();
+        this.saveDecorFilterSelection();
+      });
+    }
+
+    // 熱門常客推薦
+    if (this.elements.btnPresetHotDecors) {
+      this.elements.btnPresetHotDecors.addEventListener('click', () => {
+        this.selectedDecorIds = new Set(POPULAR_DECOR_IDS);
+        this.renderDecorSwitches();
+        this.saveDecorFilterSelection();
+        this.showToast('✨ 已載入 17 種精選熱門飾品');
+      });
+    }
 
     // 開關飾品篩選面板抽屜
     this.elements.btnToggleFilterDrawer.addEventListener('click', () => {
-      this.elements.decorFilterPanel.classList.toggle('expanded');
+      this.toggleFilterPanel();
     });
+
+    // 關閉抽屜
+    if (this.elements.btnCloseFilter) {
+      this.elements.btnCloseFilter.addEventListener('click', () => {
+        this.closeFilterPanel();
+      });
+    }
+
+    if (this.elements.filterBackdrop) {
+      this.elements.filterBackdrop.addEventListener('click', () => {
+        this.closeFilterPanel();
+      });
+    }
+
+    // 套用篩選並搜尋
+    if (this.elements.btnApplyFilter) {
+      this.elements.btnApplyFilter.addEventListener('click', () => {
+        this.saveDecorFilterSelection();
+        this.closeFilterPanel();
+        this.showToast(`✅ 已套用飾品篩選（共 ${this.selectedDecorIds.size} 種）`);
+        this.executeQuery();
+      });
+    }
+
+    // 手機視圖切換分頁
+    if (this.elements.mobileViewTabs) {
+      this.elements.mobileViewTabs.addEventListener('click', (e) => {
+        const btn = e.target.closest('.tab-btn');
+        if (!btn) return;
+        const view = btn.dataset.view;
+        if (view) this.applyMobileView(view);
+      });
+    }
 
     // 排序與數量選項改變
     this.elements.selectSortRule.addEventListener('change', (e) => {
@@ -235,6 +414,7 @@ export class PikminApp {
       this.radar.resetView();
     });
   }
+
 
   /**
    * 呼叫 Web Geolocation API 獲取使用者 GPS

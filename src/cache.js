@@ -15,8 +15,7 @@ function openDB() {
   if (dbPromise) return dbPromise;
 
   dbPromise = new Promise((resolve) => {
-    if (!('indexedDB' in window)) {
-      console.warn('[Cache] IndexedDB not available, falling back to memory/localStorage');
+    if (typeof window === 'undefined' || !('indexedDB' in window)) {
       return resolve(null);
     }
 
@@ -60,6 +59,7 @@ export async function getCachedPOIs(cacheKey) {
   try {
     const db = await openDB();
     if (!db) {
+      if (typeof localStorage === 'undefined') return null;
       const item = localStorage.getItem('cache_' + cacheKey);
       if (!item) return null;
       const parsed = JSON.parse(item);
@@ -94,6 +94,25 @@ export async function getCachedPOIs(cacheKey) {
   }
 }
 
+const DECOR_FILTER_KEY = 'pikmin_decor_filter_selection_v2';
+
+
+function clearOldLocalCache() {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const keysToRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith('cache_')) {
+        keysToRemove.push(k);
+      }
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+  } catch (e) {
+    console.warn('[Cache] Cleanup error:', e);
+  }
+}
+
 /**
  * 寫入快取資料
  */
@@ -107,11 +126,12 @@ export async function setCachedPOIs(cacheKey, data) {
 
     const db = await openDB();
     if (!db) {
-      try {
-        localStorage.setItem('cache_' + cacheKey, JSON.stringify(payload));
-      } catch (e) {
-        // localStorage 可能已滿
-        localStorage.clear();
+      if (typeof localStorage !== 'undefined') {
+        try {
+          localStorage.setItem('cache_' + cacheKey, JSON.stringify(payload));
+        } catch (e) {
+          clearOldLocalCache();
+        }
       }
       return;
     }
@@ -136,6 +156,31 @@ export async function deleteCachedKey(key) {
 }
 
 /**
+ * 飾品篩選選擇持久化（獨立存儲鍵，避免被快取清除影響）
+ */
+export function loadDecorFilter() {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(DECOR_FILTER_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+export function saveDecorFilter(decorIds) {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const arr = Array.isArray(decorIds) ? decorIds : Array.from(decorIds);
+    localStorage.setItem(DECOR_FILTER_KEY, JSON.stringify(arr));
+  } catch (err) {
+    console.warn('[DecorFilter] Save error:', err);
+  }
+}
+
+/**
  * 使用者偏好設定持久化
  */
 export function loadUserSettings(defaultSettings) {
@@ -155,3 +200,4 @@ export function saveUserSettings(settings) {
     console.warn('[Settings] Save error:', err);
   }
 }
+

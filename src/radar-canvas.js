@@ -446,24 +446,55 @@ export class RadarCanvas {
       }
     });
 
-    // 觸控支援 (Touch Pan & Tap)
+    // 觸控支援 (Touch Pan & Multi-touch Pinch Zoom)
     let touchStartX = 0;
     let touchStartY = 0;
+    let pinchStartDistance = 0;
+    let pinchStartZoom = 1.0;
+    let isTouchInteracting = false;
 
     this.canvas.addEventListener('touchstart', (e) => {
       if (e.touches.length === 1) {
         touchStartX = e.touches[0].clientX - this.offsetX;
         touchStartY = e.touches[0].clientY - this.offsetY;
+        isTouchInteracting = true;
+      } else if (e.touches.length === 2) {
+        pinchStartDistance = Math.hypot(
+          e.touches[0].clientX - e.touches[1].clientX,
+          e.touches[0].clientY - e.touches[1].clientY
+        );
+        pinchStartZoom = this.zoom;
+        isTouchInteracting = true;
       }
     }, { passive: true });
 
     this.canvas.addEventListener('touchmove', (e) => {
-      if (e.touches.length === 1) {
+      if (e.touches.length === 1 && isTouchInteracting && pinchStartDistance === 0) {
         this.offsetX = e.touches[0].clientX - touchStartX;
         this.offsetY = e.touches[0].clientY - touchStartY;
         this.render();
+      } else if (e.touches.length === 2 && pinchStartDistance > 0) {
+        const currentDist = Math.hypot(
+          e.touches[0].clientX - e.touches[1].clientX,
+          e.touches[0].clientY - e.touches[1].clientY
+        );
+        if (currentDist > 5) {
+          const scale = currentDist / pinchStartDistance;
+          this.zoom = Math.min(Math.max(pinchStartZoom * scale, 0.4), 4.0);
+          this.render();
+        }
       }
     }, { passive: true });
+
+    this.canvas.addEventListener('touchend', (e) => {
+      if (e.touches.length < 2) {
+        pinchStartDistance = 0;
+      }
+      if (e.touches.length === 0) {
+        isTouchInteracting = false;
+      }
+    }, { passive: true });
+
   }
 
   destroy() {
