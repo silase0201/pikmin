@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>皮克敏飾品快速搜尋雷達 | Pikmin Bloom Decor Radar</title>
+  <meta name="description" content="依據目前 GPS 位置即時搜尋周圍皮克敏 Bloom S2 網格飾品位置，支援純種區優先、距離排序與一鍵地圖 App 導航。">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app" class="app-container">
+    <!-- 頂部導航與 GPS 狀態列 -->
+    <header class="top-nav">
+      <div class="nav-brand">
+        <span class="brand-icon">🌱</span>
+        <div class="brand-text">
+          <h1 class="brand-title">皮克敏飾品雷達</h1>
+          <span class="brand-subtitle">Pikmin Bloom S2 Decor Radar</span>
+        </div>
+      </div>
+
+      <div class="location-bar">
+        <div class="gps-info-box">
+          <span id="gps-status-text" class="gps-status">🛰️ 正在讀取 GPS 座標...</span>
+          <span id="gps-coord-text" class="gps-coord">--</span>
+        </div>
+        <div class="gps-actions">
+          <button id="btn-refresh-gps" class="btn-icon" title="重新獲取目前 GPS 定位">🔄 重新定位</button>
+          <button id="btn-presets" class="btn-icon" title="切換常用預設地點">📍 熱門地點</button>
+          <button id="btn-manual-gps" class="btn-icon" title="手動輸入經緯度座標">✏️ 手動坐標</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- 工具控制列 -->
+    <section class="toolbar">
+      <div class="toolbar-left">
+        <button id="btn-toggle-filter" class="btn-toggle-filter">
+          <span>🔍 篩選飾品</span>
+          <span id="selected-count-badge" class="badge-count">39 / 39</span>
+          <span class="arrow-indicator">▾</span>
+        </button>
+
+        <div class="select-group">
+          <label for="select-sort-rule">排序：</label>
+          <select id="select-sort-rule" class="custom-select">
+            <option value="pure">🟢 純種區優先 (100% 命中)</option>
+            <option value="distance">📏 距離最近</option>
+            <option value="matches">⭐ 最多符合 (多重雙收)</option>
+          </select>
+        </div>
+
+        <div class="select-group">
+          <label for="select-display-limit">顯示：</label>
+          <select id="select-display-limit" class="custom-select">
+            <option value="10">10 筆</option>
+            <option value="25" selected>25 筆</option>
+            <option value="50">50 筆</option>
+            <option value="100">100 筆</option>
+            <option value="9999">全部</option>
+          </select>
+        </div>
+
+        <div class="select-group">
+          <label for="select-radius">半徑：</label>
+          <select id="select-radius" class="custom-select">
+            <option value="300">300m</option>
+            <option value="500">500m</option>
+            <option value="1000" selected>1km (推薦)</option>
+            <option value="2000">2km</option>
+            <option value="3000">3km</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="toolbar-right">
+        <button id="btn-execute-search" class="btn-search-primary">⚡ 立即搜尋</button>
+      </div>
+    </section>
+
+    <!-- 可展開的飾品開關抽屜 (無子選項，排除非地圖飾品) -->
+    <section id="decor-filter-panel" class="decor-filter-panel">
+      <div class="filter-header">
+        <div class="filter-search-box">
+          <input type="text" id="decor-search-input" placeholder="過濾飾品名稱 (例: 咖啡、拉麵、便利商店...)" />
+        </div>
+        <div class="filter-actions">
+          <button id="btn-select-all-decors" class="btn-text">全選</button>
+          <span class="divider">|</span>
+          <button id="btn-clear-all-decors" class="btn-text">全部清除</button>
+        </div>
+      </div>
+      <div id="decor-grid" class="decor-grid">
+        <!-- 由 JS 動態產生 39 種大類飾品開關 -->
+      </div>
+    </section>
+
+    <!-- 主要呈現區域：左側為空白座標雷達畫布，右側為推薦點位清單 -->
+    <main class="main-content">
+      <!-- 空白座標雷達畫布區 (0 張圖片載入，極致響應) -->
+      <section class="radar-section">
+        <div class="radar-card">
+          <div class="radar-header">
+            <div class="radar-title">
+              <span class="status-dot live"></span>
+              <span>空白座標雷達 (S2 Level 17)</span>
+            </div>
+            <div class="radar-controls">
+              <button id="btn-reset-view" class="btn-mini" title="重設視圖置中">🎯 回到中心</button>
+            </div>
+          </div>
+
+          <div class="radar-canvas-wrapper">
+            <canvas id="radar-canvas"></canvas>
+            <!-- 視圖浮動圖例 -->
+            <div class="canvas-legend">
+              <span class="legend-item"><span class="legend-box pure"></span>純種區</span>
+              <span class="legend-item"><span class="legend-box mixed"></span>混雜區</span>
+              <span class="legend-item"><span class="legend-dot user"></span>目前位置</span>
+            </div>
+            <div class="canvas-tip">
+              <span>💡 可拖曳平移、滾輪縮放視角；點選標記即時鎖定</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 推薦點位與網格清單區 -->
+      <section class="results-section">
+        <div class="results-card">
+          <div class="results-header">
+            <div id="result-stats" class="result-stats">
+              <span>準備就緒，請點擊搜尋...</span>
+            </div>
+          </div>
+
+          <div id="result-list" class="result-list">
+            <!-- 由 JS 動態產生結果卡片 -->
+            <div class="empty-state">
+              <div class="empty-icon">🌱</div>
+              <p>點擊上方「⚡ 立即搜尋」開始探測周遭皮克敏花苗飾品！</p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- 常用地點選單 Modal -->
+    <div id="preset-modal" class="modal-backdrop">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>📍 選擇熱門探索點</h3>
+          <button class="btn-close-modal">✕</button>
+        </div>
+        <div class="preset-list"></div>
+      </div>
+    </div>
+
+    <!-- 手動輸入座標 Modal -->
+    <div id="manual-modal" class="modal-backdrop">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>✏️ 自訂搜尋座標</h3>
+          <button class="btn-close-modal">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="manual-lat">緯度 (Latitude):</label>
+            <input type="number" id="manual-lat" step="0.00001" placeholder="例: 25.0478" />
+          </div>
+          <div class="form-group">
+            <label for="manual-lng">經度 (Longitude):</label>
+            <input type="number" id="manual-lng" step="0.00001" placeholder="例: 121.5170" />
+          </div>
+          <button class="btn-search-primary btn-confirm-manual" style="width: 100%; margin-top: 12px;">套用並搜尋</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 浮動提示 Toast -->
+    <div id="toast" class="toast"></div>
+  </div>
+
+  <!-- 引入主應用腳本 (Modern ES Module) -->
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>
