@@ -152,7 +152,7 @@ export async function deleteCachedKey(key) {
       tx.objectStore(STORE_NAME).delete(key);
     }
     localStorage.removeItem('cache_' + key);
-  } catch (e) {}
+  } catch (e) { }
 }
 
 /**

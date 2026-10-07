@@ -95,7 +95,7 @@ export class PikminApp {
       if (savedView && ['both', 'radar', 'list'].includes(savedView)) {
         this.mobileView = savedView;
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 
   saveDecorFilterSelection() {
@@ -289,7 +289,7 @@ export class PikminApp {
 
     try {
       localStorage.setItem('pikmin_mobile_view_v1', viewMode);
-    } catch (e) {}
+    } catch (e) { }
 
     // 雷達重算尺寸
     setTimeout(() => {
