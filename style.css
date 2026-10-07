@@ -79,9 +79,8 @@ body.filter-drawer-open {
   background: rgba(15, 23, 42, 0.94);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--bg-card-border);
-  position: sticky;
-  top: 0;
-  z-index: 50;
+  position: relative;
+  z-index: 10;
 }
 
 .nav-brand {
@@ -176,8 +175,20 @@ body.filter-drawer-open {
   flex-direction: column;
   gap: 8px;
   padding: 10px 16px;
-  background: rgba(15, 23, 42, 0.75);
+  background: rgba(15, 23, 42, 0.94);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--bg-card-border);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+  transition: background-color 0.2s ease, box-shadow 0.2s ease, padding 0.2s ease;
+}
+
+.toolbar.is-stuck {
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
+  background: rgba(15, 23, 42, 0.97);
 }
 
 .toolbar-primary-row {
@@ -226,6 +237,7 @@ body.filter-drawer-open {
   transition: transform 0.25s ease;
 }
 
+body.filter-drawer-open .arrow-indicator,
 .decor-filter-panel.expanded ~ .toolbar .arrow-indicator {
   transform: rotate(180deg);
 }
@@ -372,12 +384,31 @@ body.filter-drawer-open {
   background: #0d1424;
   border-bottom: 1px solid var(--bg-card-border);
   padding: 16px 20px;
-  z-index: 110;
+  z-index: 120;
 }
 
 .decor-filter-panel.expanded {
   display: flex;
   flex-direction: column;
+}
+
+@media (min-width: 769px) {
+  .decor-filter-panel.expanded {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(780px, 92vw);
+    max-height: 85vh;
+    border-radius: var(--radius-lg);
+    border: 1px solid rgba(56, 189, 248, 0.35);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.85);
+    animation: modalScale 0.2s ease-out;
+  }
+
+  .decor-filter-panel.expanded .decor-grid {
+    max-height: 52vh;
+  }
 }
 
 .bottom-sheet-handle {
@@ -1167,6 +1198,10 @@ body.filter-drawer-open {
   .toolbar {
     padding: 8px 12px;
     gap: 8px;
+  }
+
+  .toolbar.is-stuck {
+    padding-top: calc(8px + var(--safe-top));
   }
 
   /* 啟用手機視圖切換標籤列 */
