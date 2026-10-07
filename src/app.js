@@ -149,6 +149,8 @@ export class PikminApp {
       btnResetView: document.getElementById('btn-reset-view'),
       mainContent: document.querySelector('.main-content'),
       mobileViewTabs: document.getElementById('mobile-view-tabs'),
+      topNav: document.querySelector('.top-nav'),
+      toolbar: document.querySelector('.toolbar'),
     };
 
     // 套用選單初始值
@@ -466,6 +468,14 @@ export class PikminApp {
     this.elements.btnResetView.addEventListener('click', () => {
       this.radar.resetView();
     });
+
+    // 監聽 top-nav 滾動狀態，動態標記 toolbar 吸頂狀態 (.is-stuck)
+    if (this.elements.topNav && this.elements.toolbar && 'IntersectionObserver' in window) {
+      const navObserver = new IntersectionObserver(([entry]) => {
+        this.elements.toolbar.classList.toggle('is-stuck', !entry.isIntersecting);
+      }, { threshold: 0 });
+      navObserver.observe(this.elements.topNav);
+    }
   }
 
 
